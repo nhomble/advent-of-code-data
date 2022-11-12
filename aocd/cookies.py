@@ -12,57 +12,40 @@ from aocd.models import AOCD_CONFIG_DIR
 from aocd.utils import _ensure_intermediate_dirs
 from aocd.utils import get_owner
 
-
 log = logging.getLogger(__name__)
 
 
-def scrape_session_tokens():
-    aocd_token_file = os.path.join(AOCD_CONFIG_DIR, "token")
-    aocd_tokens_file = os.path.join(AOCD_CONFIG_DIR, "tokens.json")
-
-    parser = argparse.ArgumentParser(description="Scrapes AoC session tokens from your browser's cookie storage")
-    parser.add_argument("-v", "--verbose", action="count", help="increased logging (may be specified multiple)")
-    parser.add_argument("-c", "--check", nargs="?", help="check existing token(s) and exit", const=True)
-    args = parser.parse_args()
-
-    if args.verbose is None:
-        log_level = logging.WARNING
-    elif args.verbose == 1:
-        log_level = logging.INFO
+def check_tokens(should_check: bool, aocd_token_file_path: str):
+    if should_check is True:
+        tokens = {}
+        if os.environ.get("AOC_SESSION"):
+            tokens["AOC_SESSION"] = os.environ["AOC_SESSION"]
+        if os.path.isfile(aocd_token_file_path):
+            with open(aocd_token_file_path) as f:
+                txt = f.read().strip()
+                if txt:
+                    tokens[aocd_token_file_path] = txt.split()[0]
+        if os.path.isfile(aocd_token_file_path):
+            with open(aocd_token_file_path) as f:
+                tokens.update(json.load(f))
     else:
-        log_level = logging.DEBUG
-    logging.basicConfig(level=log_level)
-    log.debug("called with %r", args)
-
-    if args.check is not None:
-        if args.check is True:
-            tokens = {}
-            if os.environ.get("AOC_SESSION"):
-                tokens["AOC_SESSION"] = os.environ["AOC_SESSION"]
-            if os.path.isfile(aocd_token_file):
-                with open(aocd_token_file) as f:
-                    txt = f.read().strip()
-                    if txt:
-                        tokens[aocd_token_file] = txt.split()[0]
-            if os.path.isfile(aocd_tokens_file):
-                with open(aocd_tokens_file) as f:
-                    tokens.update(json.load(f))
+        tokens = {"CLI": should_check}
+    if not tokens:
+        sys.exit("no existing tokens found")
+    log.debug("%d tokens to check", len(tokens))
+    for name, token in tokens.items():
+        try:
+            owner = get_owner(token)
+        except DeadTokenError:
+            cprint("{} ({}) is dead".format(token, name), color="red")
         else:
-            tokens = {"CLI": args.check}
-        if not tokens:
-            sys.exit("no existing tokens found")
-        log.debug("%d tokens to check", len(tokens))
-        for name, token in tokens.items():
-            try:
-                owner = get_owner(token)
-            except DeadTokenError:
-                cprint("{} ({}) is dead".format(token, name), color="red")
-            else:
-                print("{} ({}) is alive".format(token, name))
-                if name != owner:
-                    log.info("{} ({}) is owned by {}".format(token, name, owner))
-        sys.exit(0)
+            print("{} ({}) is alive".format(token, name))
+            if name != owner:
+                log.info("{} ({}) is owned by {}".format(token, name, owner))
+    sys.exit(0)
 
+
+def extract_tokens():
     log.debug("checking for installation of browser-cookie3 package")
     try:
         import browser_cookie3 as bc3  # soft dependency
@@ -97,7 +80,7 @@ def scrape_session_tokens():
     tokens = list({}.fromkeys([c.value for c in chrome + firefox]))
     removed = len(chrome + firefox) - len(tokens)
     if removed:
-        log.info("Removed %d duplicate%s", removed, "s"[:removed-1])
+        log.info("Removed %d duplicate%s", removed, "s"[:removed - 1])
 
     working = {}  # map of {token: auth source}
     for token in tokens:
@@ -107,6 +90,31 @@ def scrape_session_tokens():
             pass
         else:
             working[token] = owner
+    return working
+
+
+def scrape_session_tokens():
+    aocd_token_file = os.path.join(AOCD_CONFIG_DIR, "token")
+    aocd_tokens_file = os.path.join(AOCD_CONFIG_DIR, "tokens.json")
+
+    parser = argparse.ArgumentParser(description="Scrapes AoC session tokens from your browser's cookie storage")
+    parser.add_argument("-v", "--verbose", action="count", help="increased logging (may be specified multiple)")
+    parser.add_argument("-c", "--check", nargs="?", help="check existing token(s) and exit", const=True)
+    args = parser.parse_args()
+
+    if args.verbose is None:
+        log_level = logging.WARNING
+    elif args.verbose == 1:
+        log_level = logging.INFO
+    else:
+        log_level = logging.DEBUG
+    logging.basicConfig(level=log_level)
+    log.debug("called with %r", args)
+
+    if args.check is not None:
+        check_tokens(args.check, aocd_token_file)
+
+    working = extract_tokens()
 
     if not working:
         sys.exit("could not find any working tokens in browser cookies, sorry :(")
