@@ -112,7 +112,7 @@ def scrape_session_tokens():
     log.debug("called with %r", args)
 
     if args.check is not None:
-        check_tokens(args.check, aocd_token_file)
+        check_tokens(args.check, aocd_tokens_file)
 
     working = extract_tokens()
 
